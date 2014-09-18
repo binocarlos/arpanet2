@@ -1,0 +1,25 @@
+{
+  "name": "arpanet",
+  "version": "0.0.1",
+  "description": "Auto linking multi-host docker cluster",
+  "main": "index.js",
+  "scripts": {
+    "test": "node test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/binocarlos/arpanet.git"
+  },
+  "keywords": [
+    "docker",
+    "cluster",
+    "network",
+    "mesh"
+  ],
+  "author": "Kai Davenport",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/binocarlos/arpanet/issues"
+  },
+  "homepage": "https://github.com/binocarlos/arpanet"
+}

@@ -1,0 +1,333 @@
+#!/bin/bash
+
+# change ambassadord to progrium when updated
+export CONSUL_IMAGE=${CONSUL_IMAGE:="progrium/consul"}
+export CADVISOR_IMAGE=${CADVISOR_IMAGE:="google/cadvisor"}
+export AMBASSADORD_IMAGE=${AMBASSADORD_IMAGE:="binocarlos/ambassadord"}
+export REGISTRATOR_IMAGE=${REGISTRATOR_IMAGE:="progrium/registrator"}
+export FLEETSTREET_IMAGE=${FLEETSTREET_IMAGE:="binocarlos/fleetstreet"}
+
+export CONSUL_NAME=${CONSUL_NAME:="arpanet_consul"}
+export CADVISOR_NAME=${CADVISOR_NAME:="arpanet_cadvisor"}
+export AMBASSADOR_NAME=${AMBASSADOR_NAME:="arpanet_backends"}
+export REGISTRATOR_NAME=${REGISTRATOR_NAME:="arpanet_registrator"}
+export FLEETSTREET_NAME=${FLEETSTREET_NAME:="arpanet_fleetstreet"}
+
+export DOCKER_PORT=${DOCKER_PORT:=2375}
+export CADVISOR_PORT=${CADVISOR_PORT:=8080}
+export CONSUL_HTTP_PORT=${CONSUL_HTTP_PORT:=8500}
+export CONSUL_RPC_PORT=${CONSUL_RPC_PORT:=8400}
+export CONSUL_EXPECT=${CONSUL_EXPECT:=3}
+export CONSUL_DATA=${CONSUL_DATA:=/mnt/arpanet-consul}
+export CONSUL_KV_PATH=${CONSUL_KV_PATH:=/arpanet}
+
+# INSTALL
+check-environment(){
+	if [ -z $HOSTNAME ]; then
+		>&2 echo "HOSTNAME variable needed"
+		exit 1
+	fi
+	if [ -z $ARPANET_IP ]; then
+		>&2 echo "ARPANET_IP variable needed"
+		exit 1
+	fi
+}
+
+cmd-opts(){
+	if [[ "$1" == "docker" ]]; then
+		echo "-H unix:///var/run/docker.sock -H tcp://$ARPANET_IP:$DOCKER_PORT --dns 172.17.42.1 --dns 8.8.8.8 --dns-search service.consul"
+	elif [[ "$1" == "data" ]]; then
+		echo $CONSUL_DATA
+	fi
+}
+
+cmd-pull() {
+	docker pull $CONSUL_IMAGE
+	sleep 1
+	docker pull $CADVISOR_IMAGE
+	sleep 1
+	docker pull $AMBASSADORD_IMAGE
+	sleep 1
+	docker pull $REGISTRATOR_IMAGE
+	sleep 1
+	docker pull $FLEETSTREET_IMAGE
+}
+
+check-running(){
+	checkfor="$1"; shift
+	running=$(docker ps | grep $checkfor)
+	if [ -n "$running" ]; then
+		>&2 echo "$1 is already running"
+		exit 1
+	fi
+}
+
+
+start-cadvisor(){
+	local servicename="$CADVISOR_NAME.$HOSTNAME"
+	check-running $servicename
+	docker run -d \
+		--name "$servicename" \
+		-e "FLEETSTREET_NAME=$servicename" \
+		-e "SERVICE_8080_NAME=$CADVISOR_NAME" \
+		-v /var/run:/var/run:rw \
+		-v /sys:/sys:ro \
+		-v /var/lib/docker/:/var/lib/docker:ro \
+		-p $ARPANET_IP:$CADVISOR_PORT:8080 $CADVISOR_IMAGE
+}
+
+
+start-registrator(){
+	local servicename="$REGISTRATOR_NAME.$HOSTNAME"
+	docker run -d \
+		--name "$servicename" \
+		-e "FLEETSTREET_NAME=$servicename" \
+    -v /var/run/docker.sock:/tmp/docker.sock \
+    -h $HOSTNAME $REGISTRATOR_IMAGE -ip=$ARPANET_IP consul://$ARPANET_IP:$CONSUL_HTTP_PORT
+}
+
+
+start-ambassadord(){
+	local servicename="$AMBASSADOR_NAME.$HOSTNAME"
+	check-running $servicename
+	docker run -d \
+		--name "$servicename" \
+		-e "FLEETSTREET_NAME=$servicename" \
+		-v /var/run/docker.sock:/var/run/docker.sock \
+		$AMBASSADORD_IMAGE --omnimode
+
+	docker run --rm \
+		--privileged \
+		--net container:"$AMBASSADOR_NAME.$HOSTNAME" \
+		$AMBASSADORD_IMAGE --setup-iptables
+
+}
+
+start-fleetstreet(){
+	local servicename="$FLEETSTREET_NAME.$HOSTNAME"
+	check-running $servicename
+	docker run -d \
+		--name "$servicename" \
+		-e "FLEETSTREET_NAME=$servicename" \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -h $HOSTNAME $FLEETSTREET_IMAGE -ip=$ARPANET_IP -ensure consul://$ARPANET_IP:$CONSUL_HTTP_PORT$CONSUL_KV_PATH/containers
+}
+
+cmd-start-stack() {
+	start-ambassadord
+	sleep 1
+	start-registrator
+	sleep 1
+	start-cadvisor
+	sleep 1
+	start-fleetstreet
+	sleep 1
+}
+
+cmd-start-consul(){
+	local mode="$1"; shift
+	local joinip="$1"; shift
+	local servicename="$CONSUL_NAME.$HOSTNAME"
+	check-running $servicename
+	bridge_ip=$(ip ro | awk '/^default/{print $3}')
+	consul_args=""
+
+	if [[ -z $mode ]]; then
+		>&2 echo "usage: arpanet start boot|server|slave [JOINIP]"
+		exit 1
+	fi
+
+	if [[ "$mode" == "boot" ]]; then
+		if [[ -n $joinip ]]; then
+			>&2 echo "boot mode does not take a JOINIP"
+			exit 1
+		fi
+		consul_args="-server -bootstrap-expect $CONSUL_EXPECT"
+	elif [[ "$mode" == "server" ]]; then
+		if [[ -z $joinip ]]; then
+			>&2 echo "server mode needs a JOINIP"
+			exit 1
+		fi
+		consul_args="-server -join $joinip"
+	elif [[ "$mode" == "client" ]]; then
+		if [[ -z $joinip ]]; then
+			>&2 echo "client mode needs a JOINIP"
+			exit 1
+		fi
+		consul_args="-join $joinip"
+	else
+		>&2 echo "unknown mode: $mode"
+		exit 1
+	fi
+
+	docker run -d --name $servicename -h $HOSTNAME \
+		-v $CONSUL_DATA:/data \
+		-p $ARPANET_IP:8300:8300 \
+		-p $ARPANET_IP:8301:8301 \
+		-p $ARPANET_IP:8301:8301/udp \
+		-p $ARPANET_IP:8302:8302 \
+		-p $ARPANET_IP:8302:8302/udp \
+		-p $ARPANET_IP:$CONSUL_RPC_PORT:8400 \
+		-p $ARPANET_IP:$CONSUL_HTTP_PORT:8500 \
+		-p $bridge_ip:53:53/udp \
+		$CONSUL_IMAGE -advertise $ARPANET_IP $consul_args
+}
+
+stop-service() {
+	echo "stop"
+	docker stop $1
+	echo "remove"
+	docker rm $1
+}
+
+cmd-stop() {
+	stop-service "$CADVISOR_NAME.$HOSTNAME"
+	stop-service "$REGISTRATOR_NAME.$HOSTNAME"
+	stop-service "$AMBASSADOR_NAME.$HOSTNAME"
+	stop-service "$FLEETSTREET_NAME.$HOSTNAME"
+	stop-service "$CONSUL_NAME.$HOSTNAME"
+}
+
+cmd-info() {
+	cat <<EOF
+hostname:      $HOSTNAME
+IP:            $ARPANET_IP
+EOF
+}
+
+cmd-consul() {
+	local cmd="$1"; shift
+	local consul_http_endpoint="-http-addr $ARPANET_IP:$CONSUL_HTTP_PORT"
+	local consul_rpc_endpoint="-rpc-addr $ARPANET_IP:$CONSUL_RPC_PORT"
+	local consul_endpoint=$consul_rpc_endpoint
+
+	if [[ "$cmd" == "" ]]; then
+		>&2 echo "usage: arpanet consul <command>"
+		exit 1
+	elif [[ "$cmd" == "event" ]]; then
+		consul_endpoint="$consul_http_endpoint"
+	elif [[ "$cmd" == "exec" ]]; then
+		consul_endpoint="$consul_http_endpoint"
+	elif [[ "$cmd" == "watch" ]]; then
+		consul_endpoint="$consul_http_endpoint"
+	elif [[ "$cmd" == "keygen" ]]; then
+		consul_endpoint=""
+	fi
+
+	docker run -t --rm --entrypoint "/bin/consul" $CONSUL_IMAGE $cmd $consul_endpoint $@
+}
+
+cmd-kv() {
+	check-environment
+	local consul_endpoint="$ARPANET_IP:$CONSUL_HTTP_PORT"
+	local path="$consul_endpoint/v1/kv/$2"
+	path=`echo $path | sed 's/\/\/*/\//g'`
+	path=`echo $path | sed 's/\/$//'`
+	case "$1" in
+		info)
+			curl -s "$path" | jq -r .[]
+			;;
+		get)
+			curl -s "$path" | jq -r .[].Value | base64 -d
+			# we are using a different base64 binary and so this sed not needed
+			# | sed 's/$/\n/'
+			;;
+		set)
+			curl -s -X PUT -d "$3" "$path" > /dev/null
+			;;
+		del)
+			curl -s -X DELETE "$path" > /dev/null
+			;;
+		ls)
+			if [[ "$2" == "" ]]; then
+				curl -s "$path/?keys" | jq -r .[]
+			else
+				curl -s "$path/?keys" | jq -r .[] | sed "s|$2/||"
+			fi
+			;;
+		*)
+			if [[ -z "$1" ]]; then
+				>&2 echo "usage: consul kv <command>"
+			else
+				>&2 echo "unknown command $1"
+			fi
+			;;
+	esac
+}
+
+cmd-help() {
+cat <<EOF
+
+Usage: arpanet COMMAND [OPTIONS...]
+
+Commands:
+
+  arpanet setup
+
+    Setup docker for use with arpanet
+
+  arpanet pull
+
+    Pull the required docker images
+
+  start:consul boot|server|client [JOINIP] [CONSUL_OPTS...]
+
+    Start the consul service
+
+    'boot' means the first server
+    'server' means consul server nodes
+    'client' means consul client nodes
+
+    if in server or client mode - JOINIP is the ip of one other node in the cluster
+
+    CONSUL_OPTS (i.e. any argument after JOINIP) will be passed to the consul server
+
+  start:stack
+
+    Start the other services
+
+  stop
+
+    Stop arpanet
+
+  info
+
+    Show info about this arpanet node
+
+  kv <command> [OPTIONS...]
+
+  	CLI for the consul key/value store
+
+    kv info <key>
+    kv get <key>
+    kv set <key> <value>
+    kv del <key>
+    kv ls <key>
+
+  consul <command> [OPTIONS...]
+
+    Run the consul cli command against the local agent
+    The -rpc-addr and -http-addr are automatically completed
+
+  help
+
+    Show this message
+
+EOF
+}
+
+main() {
+	case "$1" in
+	opts)               shift; cmd-opts $@;;
+  pull)               shift; cmd-pull $@;;
+	start:consul)       shift; cmd-start-consul $@;;
+  start:stack)        shift; cmd-start-stack $@;;
+	stop)               shift; cmd-stop $@;;
+  info)               shift; cmd-info $@;;
+	kv)                 shift; cmd-kv $@;;
+	consul)							shift; cmd-consul $@;;
+	*)                  cmd-help $@;;
+	esac
+}
+
+main "$@"

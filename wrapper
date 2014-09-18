@@ -1,0 +1,53 @@
+#!/bin/bash
+
+if [[ -f ~/.arpanetrc ]]; then
+	source ~/.arpanetrc
+fi
+
+export CONSUL_DATA=${CONSUL_DATA:=/mnt/arpanet-consul}
+export DOCKER_PORT=${DOCKER_PORT:=2375}
+
+vars=(
+	ARPANET_IP
+	CONSUL_IMAGE
+	CADVISOR_IMAGE
+	AMBASSADORD_IMAGE
+	REGISTRATOR_IMAGE
+	FLEETSTREET_IMAGE
+	CONSUL_NAME
+	CADVISOR_NAME
+	AMBASSADOR_NAME
+	REGISTRATOR_NAME
+	FLEETSTREET_NAME
+	DOCKER_PORT
+	CADVISOR_PORT
+	CONSUL_PORT
+	CONSUL_EXPECT
+	CONSUL_DATA
+	CONSUL_KV_PATH
+)
+
+dockervars=""
+
+for i in "${vars[@]}"
+do
+	dockervars="$dockervars -e $i"
+done
+
+# if we are developing we want the script to mount into the container
+mountscript=""
+if [[ -d $ARPANET_DEV ]]; then
+	mountscript="-v $ARPANET_DEV/arpanet:/bin/arpanet"
+fi
+
+if [[ "$1" == "setup" ]]; then
+	if [ -z $ARPANET_IP ]; then
+		>&2 echo "ARPANET_IP variable needed"
+		exit 1
+	fi
+	echo "DOCKER_OPTS='-H unix:///var/run/docker.sock -H tcp://$ARPANET_IP:$DOCKER_PORT --dns 172.17.42.1 --dns 8.8.8.8 --dns-search service.consul'" > /etc/default/docker
+	mkdir -p $CONSUL_DATA
+	service docker restart
+else
+	docker run --rm -ti -h $HOSTNAME -v /var/run/docker.sock:/var/run/docker.sock $dockervars $mountscript binocarlos/arpanet $@
+fi
