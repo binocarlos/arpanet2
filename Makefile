@@ -1,7 +1,4 @@
-.PHONY: image install
-
-install:
-	cp arpanet /usr/local/bin
+.PHONY: image
 
 image:
-	docker build -t binocarlos/arpanet .
+	docker build -t binocarlos/arpanet2 .

@@ -1,0 +1,236 @@
+#!/bin/bash
+
+# change ambassadord to progrium when updated
+export CONSUL_IMAGE=${CONSUL_IMAGE:="progrium/consul"}
+
+# wait for https://github.com/zettio/weave/pull/70 to be merged
+#export WEAVE_URL=${WEAVE_URL:="https://raw.githubusercontent.com/zettio/weave/master/weaver/weave"}
+export WEAVE_URL=${WEAVE_URL:="https://raw.githubusercontent.com/binocarlos/arpanet2/master/weave"}
+export DOCKER_PORT=${DOCKER_PORT:=2375}
+export CONSUL_EXPECT=${CONSUL_EXPECT:=3}
+export CONSUL_DATA=${CONSUL_DATA:=/mnt/arpanet-consul}
+export CONSUL_KV_PATH=${CONSUL_KV_PATH:=/arpanet2}
+
+check-root(){
+	[ `id -u` = 0 ] || {
+    echo "arpanet2 $1 must be run as 'root'" >&2
+    exit 1
+	}
+}
+
+cmd-setup() {
+	check-root setup
+	if [[ -n "$ARPANET2_DEV" ]]; then
+		ln -sf $ARPANET2_DEV/weave /usr/local/bin/weave
+		chmod a+x /usr/local/bin/weave
+	else
+		wget -O /usr/local/bin/weave $WEAVE_URL
+		chmod a+x /usr/local/bin/weave
+	fi
+	mkdir -p $CONSUL_DATA
+	apt-get install -y ethtool conntrack
+}
+
+configure-docker(){
+	local address="$1"; shift
+	local dockeraddress="10.254.$address"
+	weave expose "$dockeraddress/8"
+	echo "DOCKER_OPTS='-H unix:///var/run/docker.sock -H tcp://$dockeraddress:$DOCKER_PORT --dns 172.17.42.1 --dns 8.8.8.8 --dns-search service.consul'" > /etc/default/docker
+	service docker restart
+	sleep 2
+}
+
+cmd-boot() {
+	check-root boot
+	local address="$1"; shift
+	local password="$1"; shift
+	configure-docker $address
+	echo "weave launch 10.255.$address/8 -password $password"
+	#start-consul boot $address $@
+}
+
+cmd-join() {
+	check-root join
+	local mode="$1"; shift
+	local address="$1"; shift
+	local password="$1"; shift
+	local joinaddress="$1"; shift
+	local joinip="$1"; shift
+	configure-docker $address
+	weave launch "10.255.$address/8" $joinip -password $password
+	#start-consul $mode $address $joinaddress $@
+}
+
+cmd-server() {
+	cmd-join server $@
+}
+
+cmd-client() {
+	cmd-join client $@
+}
+
+start-consul(){
+	local mode="$1"; shift
+	local address="$1"; shift
+	local joinaddress="$1"; shift
+
+	local fulladdress="10.253.$address"
+	local fulljoinaddress="10.253.$joinaddress"
+
+	bridge_ip=$(ip ro | awk '/^default/{print $3}')
+	consul_args=""
+
+	if [[ "$mode" == "boot" ]]; then
+		consul_args="-server -bootstrap-expect $CONSUL_EXPECT"
+	elif [[ "$mode" == "server" ]]; then
+		consul_args="-server -join $fulljoinaddress"
+	elif [[ "$mode" == "client" ]]; then
+		consul_args="-join $fulljoinaddress"
+	else
+		>&2 echo "unknown mode: $mode"
+		exit 1
+	fi
+
+	weave run "$address/8" --name consul -h $HOSTNAME \
+		-v $CONSUL_DATA:/data \
+		-p 127.0.0.1:8300:8300 \
+		-p 127.0.0.1:8301:8301 \
+		-p 127.0.0.1:8301:8301/udp \
+		-p 127.0.0.1:8302:8302 \
+		-p 127.0.0.1:8302:8302/udp \
+		-p 127.0.0.1:8400:8400 \
+		-p 127.0.0.1:8500:8500 \
+		-p $bridge_ip:53:53/udp \
+		$CONSUL_IMAGE -advertise $fulladdress $consul_args $@
+}
+
+cmd-consul() {
+	local cmd="$1"; shift
+	local consul_http_endpoint="-http-addr $ARPANET_IP:$CONSUL_HTTP_PORT"
+	local consul_rpc_endpoint="-rpc-addr $ARPANET_IP:$CONSUL_RPC_PORT"
+	local consul_endpoint=$consul_rpc_endpoint
+
+	if [[ "$cmd" == "" ]]; then
+		>&2 echo "usage: arpanet consul <command>"
+		exit 1
+	elif [[ "$cmd" == "event" ]]; then
+		consul_endpoint="$consul_http_endpoint"
+	elif [[ "$cmd" == "exec" ]]; then
+		consul_endpoint="$consul_http_endpoint"
+	elif [[ "$cmd" == "watch" ]]; then
+		consul_endpoint="$consul_http_endpoint"
+	elif [[ "$cmd" == "keygen" ]]; then
+		consul_endpoint=""
+	fi
+
+	docker run -t --rm --entrypoint "/bin/consul" $CONSUL_IMAGE $cmd $consul_endpoint $@
+}
+
+cmd-kv() {
+	check-environment
+	local consul_endpoint="$ARPANET_IP:$CONSUL_HTTP_PORT"
+	local path="$consul_endpoint/v1/kv/$2"
+	path=`echo $path | sed 's/\/\/*/\//g'`
+	path=`echo $path | sed 's/\/$//'`
+	case "$1" in
+		info)
+			curl -s "$path" | jq -r .[]
+			;;
+		get)
+			curl -s "$path" | jq -r .[].Value | base64 -d
+			# we are using a different base64 binary and so this sed not needed
+			# | sed 's/$/\n/'
+			;;
+		set)
+			curl -s -X PUT -d "$3" "$path" > /dev/null
+			;;
+		del)
+			curl -s -X DELETE "$path" > /dev/null
+			;;
+		ls)
+			if [[ "$2" == "" ]]; then
+				curl -s "$path/?keys" | jq -r .[]
+			else
+				curl -s "$path/?keys" | jq -r .[] | sed "s|$2/||"
+			fi
+			;;
+		*)
+			if [[ -z "$1" ]]; then
+				>&2 echo "usage: consul kv <command>"
+			else
+				>&2 echo "unknown command $1"
+			fi
+			;;
+	esac
+}
+
+cmd-help() {
+cat <<EOF
+
+Usage: arpanet2 COMMAND [OPTIONS...]
+
+Commands:
+
+  arpanet setup
+
+    Setup docker for use with arpanet2
+
+  boot <address> <password> [CONSUL_OPTS...]
+
+  	Boot the first arpanet node
+  	
+  	address is the arpanet address of the node e.g. 2.8
+  	password allows cross data-center communication
+  	CONSUL_OPTS are passed to consul
+
+ 	join <mode> <address> <password> <join-weave> <join-ip> [CONSUL_OPTS...]
+
+ 		Boot a server node
+
+ 		mode is the consul 'server' or 'client' mode
+ 		address is the arpanet address of the node e.g. 2.8
+  	password allows cross data-center communication
+  	join-weave is the arpanet address of another node e.g. 2.7
+  	join-ip is the IP address of another node e.g. 192.168.8.120
+  	CONSUL_OPTS are passed to consul
+
+  stop
+
+    Stop arpanet2
+
+  kv <command> [OPTIONS...]
+
+  	CLI for the consul key/value store
+
+    kv info <key>
+    kv get <key>
+    kv set <key> <value>
+    kv del <key>
+    kv ls <key>
+
+  consul <command> [OPTIONS...]
+
+    Run the consul cli command against the local agent
+    The -rpc-addr and -http-addr are automatically completed
+
+  help
+
+    Show this message
+
+EOF
+}
+
+main() {
+	case "$1" in
+	setup)							shift; cmd-setup; $@;;
+	boot)               shift; cmd-boot $@;;
+  server)             shift; cmd-server $@;;
+  client)             shift; cmd-client $@;;
+	stop)               shift; cmd-stop $@;;
+	kv)                 shift; cmd-kv $@;;
+	consul)							shift; cmd-consul $@;;
+	*)                  cmd-help $@;;
+	esac
+}
+
+main "$@"

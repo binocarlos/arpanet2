@@ -12,9 +12,9 @@ RUN chmod +x /bin/base64
 
 RUN opkg-install curl bash
 
-ADD ./arpanet /bin/arpanet
+ADD ./arpanet2 /bin/arpanet2
 
 ENV SHELL /bin/bash
 
-ENTRYPOINT ["/bin/arpanet"]
+ENTRYPOINT ["/bin/arpanet2"]
 CMD []
