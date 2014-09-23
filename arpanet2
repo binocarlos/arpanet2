@@ -37,7 +37,7 @@ configure-docker(){
 	weave expose "$dockeraddress/8"
 	echo "DOCKER_OPTS='-H unix:///var/run/docker.sock -H tcp://$dockeraddress:$DOCKER_PORT --dns 172.17.42.1 --dns 8.8.8.8 --dns-search service.consul'" > /etc/default/docker
 	service docker restart
-	sleep 2
+	sleep 1
 }
 
 cmd-boot() {
@@ -45,7 +45,7 @@ cmd-boot() {
 	local address="$1"; shift
 	local password="$1"; shift
 	configure-docker $address
-	echo "weave launch 10.255.$address/8 -password $password"
+	weave launch "10.255.$address/8" -password $password
 	#start-consul boot $address $@
 }
 
@@ -57,7 +57,7 @@ cmd-join() {
 	local joinaddress="$1"; shift
 	local joinip="$1"; shift
 	configure-docker $address
-	weave launch "10.255.$address/8" $joinip -password $password
+	weave launch "10.255.$address/8" -password $password $joinip
 	#start-consul $mode $address $joinaddress $@
 }
 
@@ -67,6 +67,11 @@ cmd-server() {
 
 cmd-client() {
 	cmd-join client $@
+}
+
+cmd-stop() {
+	check-root stop
+	weave stop
 }
 
 start-consul(){
