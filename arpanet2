@@ -4,12 +4,14 @@
 export CONSUL_IMAGE=${CONSUL_IMAGE:="progrium/consul"}
 
 # wait for https://github.com/zettio/weave/pull/70 to be merged
-#export WEAVE_URL=${WEAVE_URL:="https://raw.githubusercontent.com/zettio/weave/master/weaver/weave"}
-export WEAVE_URL=${WEAVE_URL:="https://raw.githubusercontent.com/binocarlos/arpanet2/master/weave"}
+export WEAVE_URL=${WEAVE_URL:="https://raw.githubusercontent.com/zettio/weave/master/weaver/weave"}
+export CONSUL_URL=${CONSUL_URL:="https://dl.bintray.com/mitchellh/consul/0.3.1_linux_amd64.zip"}
 export DOCKER_PORT=${DOCKER_PORT:=2375}
 export CONSUL_EXPECT=${CONSUL_EXPECT:=3}
 export CONSUL_DATA=${CONSUL_DATA:=/mnt/arpanet-consul}
 export CONSUL_KV_PATH=${CONSUL_KV_PATH:=/arpanet2}
+
+DOCKER_BRIDGE=`ip addr | awk '/inet/ && /docker0/{sub(/\/.*$/,"",$2); print $2}'`
 
 check-root(){
 	[ `id -u` = 0 ] || {
@@ -18,68 +20,90 @@ check-root(){
 	}
 }
 
-cmd-setup() {
-	check-root setup
-	if [[ -n "$ARPANET2_DEV" ]]; then
-		ln -sf $ARPANET2_DEV/weave /usr/local/bin/weave
-		chmod a+x /usr/local/bin/weave
-	else
-		wget -O /usr/local/bin/weave $WEAVE_URL
-		chmod a+x /usr/local/bin/weave
-	fi
-	mkdir -p $CONSUL_DATA
-	apt-get install -y ethtool conntrack
+usage() {
+cat <<EOF
+Usage:
+arpanet2 install
+arpanet2 boot <address> <password> [CONSUL_OPTS...]
+arpanet2 join:<mode> <address> <password> <join-address> <join-ip> [CONSUL_OPTS...]
+arpanet2 stop
+arpanet2 kv <command> [OPTIONS...]
+arpanet2 consul <command> [OPTIONS...]
+arpanet2 help
+EOF
+	exit 1
 }
 
-configure-docker(){
-	local address="$1"; shift
-	local dockeraddress="10.254.$address"
-	weave expose "$dockeraddress/8"
-	echo "DOCKER_OPTS='-H unix:///var/run/docker.sock -H tcp://$dockeraddress:$DOCKER_PORT --dns 172.17.42.1 --dns 8.8.8.8 --dns-search service.consul'" > /etc/default/docker
+cmd-install() {
+	check-root install
+	apt-get install -y ethtool conntrack unzip
+	wget -O /usr/local/bin/weave $WEAVE_URL
+	chmod a+x /usr/local/bin/weave
+	mkdir -p $CONSUL_DATA
+	wget -O /tmp/consul.zip $CONSUL_URL
+	cd /bin && unzip -o /tmp/consul.zip && chmod +x /bin/consul && rm /tmp/consul.zip
+}
+
+configure-network() {
+	local arpaaddress="$1"; shift
+	local password="$1"; shift
+	local joinip="$1"; shift
+	local joinaddress="$1"; shift
+	echo $arpaaddress > /var/run/arpanet2.address
+	weave expose "10.254.$arpaaddress/8"
+	weave expose "10.253.$arpaaddress/8"
+	echo "DOCKER_OPTS='-H unix:///var/run/docker.sock -H tcp://10.254.$arpaaddress:$DOCKER_PORT --dns $DOCKER_BRIDGE --dns 8.8.8.8 --dns-search service.consul'" > /etc/default/docker
 	service docker restart
-	sleep 1
+	echo "docker configuring consul DNS"
+	sleep 2
+	weave launch "10.255.$arpaaddress/8" -password $password $joinip
+	echo "weave configuring network: 10.255.$arpaaddress/8"
+	sleep 5
+	if [[ -n "$joinaddress" ]]; then
+		echo "ensuring weave route to $joinaddress"
+		ping -c 20 "10.253.$joinaddress"
+	fi
 }
 
 cmd-boot() {
 	check-root boot
-	local address="$1"; shift
+	[ $# -gt 1 ] || usage
+	local arpaaddress="$1"; shift
 	local password="$1"; shift
-	configure-docker $address
-	weave launch "10.255.$address/8" -password $password
-	#start-consul boot $address $@
+	configure-network $arpaaddress $password
+	start-consul boot $arpaaddress $@
 }
 
 cmd-join() {
 	check-root join
+	[ $# -gt 3 ] || usage
 	local mode="$1"; shift
-	local address="$1"; shift
+	local arpaaddress="$1"; shift
 	local password="$1"; shift
-	local joinaddress="$1"; shift
 	local joinip="$1"; shift
-	configure-docker $address
-	weave launch "10.255.$address/8" -password $password $joinip
-	#start-consul $mode $address $joinaddress $@
-}
-
-cmd-server() {
-	cmd-join server $@
-}
-
-cmd-client() {
-	cmd-join client $@
+	local joinaddress="$1"; shift
+	configure-network $arpaaddress $password $joinip $joinaddress
+	start-consul $mode $arpaaddress $joinaddress $@
 }
 
 cmd-stop() {
 	check-root stop
+	if [ -f /var/run/arpanet2.address ]; then
+		weave hide 10.254.`cat /var/run/arpanet2.address`/8
+		weave hide 10.253.`cat /var/run/arpanet2.address`/8
+	fi
+	if [ -f /var/run/consul.pid ]; then
+		kill -SIGINT `cat /var/run/consul.pid`
+	fi
 	weave stop
 }
 
 start-consul(){
 	local mode="$1"; shift
-	local address="$1"; shift
+	local arpaaddress="$1"; shift
 	local joinaddress="$1"; shift
 
-	local fulladdress="10.253.$address"
+	local fullarpaaddress="10.253.$arpaaddress"
 	local fulljoinaddress="10.253.$joinaddress"
 
 	bridge_ip=$(ip ro | awk '/^default/{print $3}')
@@ -96,17 +120,30 @@ start-consul(){
 		exit 1
 	fi
 
-	weave run "$address/8" --name consul -h $HOSTNAME \
-		-v $CONSUL_DATA:/data \
-		-p 127.0.0.1:8300:8300 \
-		-p 127.0.0.1:8301:8301 \
-		-p 127.0.0.1:8301:8301/udp \
-		-p 127.0.0.1:8302:8302 \
-		-p 127.0.0.1:8302:8302/udp \
-		-p 127.0.0.1:8400:8400 \
-		-p 127.0.0.1:8500:8500 \
-		-p $bridge_ip:53:53/udp \
-		$CONSUL_IMAGE -advertise $fulladdress $consul_args $@
+	mkdir -p /etc/consul
+
+cat << EOF > /etc/consul/consul.json
+{
+	"addresses":{
+		"dns":"$DOCKER_BRIDGE"
+	},
+	"ports": {
+		"dns": 53
+	},
+	"recursor": "8.8.8.8"
+}
+EOF
+
+	consul agent \
+		-config-dir=/etc/consul \
+		-pid-file /var/run/consul.pid \
+		-client 127.0.0.1 \
+		-advertise $fullarpaaddress \
+		-bind $fullarpaaddress \
+		-syslog \
+		-pid-file /var/run/consul.pid \
+		-data-dir $CONSUL_DATA \
+		$consul_args
 }
 
 cmd-consul() {
@@ -169,70 +206,17 @@ cmd-kv() {
 	esac
 }
 
-cmd-help() {
-cat <<EOF
 
-Usage: arpanet2 COMMAND [OPTIONS...]
-
-Commands:
-
-  arpanet setup
-
-    Setup docker for use with arpanet2
-
-  boot <address> <password> [CONSUL_OPTS...]
-
-  	Boot the first arpanet node
-  	
-  	address is the arpanet address of the node e.g. 2.8
-  	password allows cross data-center communication
-  	CONSUL_OPTS are passed to consul
-
- 	join <mode> <address> <password> <join-weave> <join-ip> [CONSUL_OPTS...]
-
- 		Boot a server node
-
- 		mode is the consul 'server' or 'client' mode
- 		address is the arpanet address of the node e.g. 2.8
-  	password allows cross data-center communication
-  	join-weave is the arpanet address of another node e.g. 2.7
-  	join-ip is the IP address of another node e.g. 192.168.8.120
-  	CONSUL_OPTS are passed to consul
-
-  stop
-
-    Stop arpanet2
-
-  kv <command> [OPTIONS...]
-
-  	CLI for the consul key/value store
-
-    kv info <key>
-    kv get <key>
-    kv set <key> <value>
-    kv del <key>
-    kv ls <key>
-
-  consul <command> [OPTIONS...]
-
-    Run the consul cli command against the local agent
-    The -rpc-addr and -http-addr are automatically completed
-
-  help
-
-    Show this message
-
-EOF
-}
 
 main() {
 	case "$1" in
-	setup)							shift; cmd-setup; $@;;
+	install)					  shift; cmd-install; $@;;
 	boot)               shift; cmd-boot $@;;
-  server)             shift; cmd-server $@;;
-  client)             shift; cmd-client $@;;
+  join:server)        shift; cmd-join server $@;;
+  join:client)        shift; cmd-join client $@;;
 	stop)               shift; cmd-stop $@;;
 	kv)                 shift; cmd-kv $@;;
+  consul:boot)	  		shift; cmd-consulboot; $@;;
 	consul)							shift; cmd-consul $@;;
 	*)                  cmd-help $@;;
 	esac
