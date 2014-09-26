@@ -192,19 +192,16 @@ start-consul(){
 cat << EOF > /etc/consul/consul.json
 {
 	"recursor": "8.8.8.8",
-	"addresses":{
-		"dns":"$DOCKER_BRIDGE"
-	},
 	"ports": {
 		"dns": 53
 	}
 }
 EOF
 
-	consul agent \
+	setsid consul agent \
 		-config-dir /etc/consul \
 		-pid-file $CONSUL_PID \
-		-client $weaveip \
+		-client $DOCKER_BRIDGE \
 		-advertise $weaveip \
 		-bind $weaveip \
 		-pid-file $CONSUL_PID \
@@ -214,15 +211,16 @@ EOF
 	if [[ $CONSUL_DEAMON ]]; then
 		echo "consul started: "`cat $CONSUL_PID`
 	else
+		touch $CONSUL_LOG
 		tail -f $CONSUL_LOG
 	fi
 }
 
 cmd-consul() {
 	local cmd="$1"; shift
-	local arpanet_address=`cat $ARPANET2_ADDRESS`
-	local http_endpoint="-http-addr $arpanet_address:$CONSUL_HTTP_PORT"
-	local rpc_endpoint="-rpc-addr $arpanet_address:$CONSUL_RPC_PORT"
+
+	local http_endpoint="-http-addr $DOCKER_BRIDGE:$CONSUL_HTTP_PORT"
+	local rpc_endpoint="-rpc-addr $DOCKER_BRIDGE:$CONSUL_RPC_PORT"
 	local use_endpoint=$rpc_endpoint
 
 	if [[ "$cmd" == "" ]]; then
@@ -285,13 +283,12 @@ main() {
 	case "$1" in
 	install)					  shift; cmd-install; $@;;
 	boot)               shift; cmd-boot $@;;
-  join:server)        shift; cmd-join server $@;;
-  join:client)        shift; cmd-join client $@;;
+	join:server)        shift; cmd-join server $@;;
+	join:client)        shift; cmd-join client $@;;
 	stop)               shift; cmd-stop $@;;
 	info)               shift; cmd-info $@;;
   reset)              shift; cmd-reset $@;;
 	kv)                 shift; cmd-kv $@;;
-  consul:boot)	  		shift; cmd-consulboot; $@;;
 	consul)							shift; cmd-consul $@;;
 	*)                  usage $@;;
 	esac
