@@ -2,11 +2,12 @@
 
 export WEAVE_URL=${WEAVE_URL:="https://raw.githubusercontent.com/zettio/weave/master/weaver/weave"}
 export DOCKER_PORT=${DOCKER_PORT:=2375}
-export CONSUL_URL=${CONSUL_URL:="https://dl.bintray.com/mitchellh/consul/0.3.1_linux_amd64.zip"}
-export CONSUL_EXPECT=${CONSUL_EXPECT:=2}
+export CONSUL_URL=${CONSUL_URL:="https://dl.bintray.com/mitchellh/consul/0.4.0_linux_amd64.zip"}
+export CONSUL_EXPECT=${CONSUL_EXPECT:=3}
 export CONSUL_LOG=${CONSUL_LOG:=/var/log/consul.log}
 export CONSUL_DATA=${CONSUL_DATA:=/mnt/arpanet-consul}
 export CONSUL_KV_PATH=${CONSUL_KV_PATH:=/arpanet2}
+export CONSUL_TAIL=${CONSUL_TAIL:=""}
 
 DOCKER_BRIDGE=`ip addr | awk '/inet/ && /docker0/{sub(/\/.*$/,"",$2); print $2}'`
 
@@ -185,13 +186,13 @@ start-consul(){
 
 cat << EOF > /etc/consul/consul.json
 {
+	"recursor": "8.8.8.8",
 	"addresses":{
 		"dns":"$DOCKER_BRIDGE"
 	},
 	"ports": {
 		"dns": 53
-	},
-	"recursor": "8.8.8.8"
+	}
 }
 EOF
 
@@ -205,8 +206,9 @@ EOF
 		-data-dir $CONSUL_DATA \
 		$consul_args >$CONSUL_LOG 2>&1 < /dev/null &
 
-	tail -f $CONSUL_LOG
-	
+	if [[ $CONSUL_TAIL ]]; then
+		tail -f $CONSUL_LOG
+	fi
 }
 
 cmd-consul() {
