@@ -34,6 +34,35 @@ EOF
 	exit 1
 }
 
+ip-from-cidr() {
+	echo $1 | sed -e 's/\/[0-9]*$//g'
+}
+
+subnet-from-cidr() {
+	echo $1 | sed -e 's/^[0-9\.]*\///g'
+}
+
+# wait for weave to have established a route before consul kicks in
+ensure-connection() {
+	local joinweave="$1"; shift
+	local pingcount=0
+	local hit=0
+	local result=""
+	while [[ $pingcount -lt 20 && $hit -le 0 ]]; do
+		pingcount=$((pingcount+1))
+		echo "ping #$pingcount -> $joinweave"
+		result=`ping -c 1 $joinweave`
+		if [[ $result == *"1 received"* ]];
+		then
+		  hit=1
+		fi
+	done
+	if [[ $hit -le 0 ]]; then
+		>&2 echo "20 ping attempts to $joinweave failed"
+		exit 1
+	fi
+}
+
 cmd-install() {
 	check-root install
 	apt-get install -y ethtool conntrack unzip
@@ -45,52 +74,53 @@ cmd-install() {
 }
 
 configure-network() {
-	local arpaaddress="$1"; shift
+	local weaveaddress="$1"; shift
 	local password="$1"; shift
 	local joinip="$1"; shift
-	local joinaddress="$1"; shift
-	echo $arpaaddress > /var/run/arpanet2.address
-	weave expose "10.254.$arpaaddress/8"
-	weave expose "10.253.$arpaaddress/8"
-	echo "DOCKER_OPTS='-H unix:///var/run/docker.sock -H tcp://10.254.$arpaaddress:$DOCKER_PORT --dns $DOCKER_BRIDGE --dns 8.8.8.8 --dns-search service.consul'" > /etc/default/docker
+	local joinweave="$1"; shift
+	local weaveip=$(ip-from-cidr $weaveaddress)
+
+	echo $weaveaddress > /var/run/arpanet2.address
+	weave expose $weaveaddress
+	echo "DOCKER_OPTS='-H unix:///var/run/docker.sock -H tcp://$weaveip:$DOCKER_PORT --dns $DOCKER_BRIDGE --dns 8.8.8.8 --dns-search service.consul'" > /etc/default/docker
 	service docker restart
 	echo "docker configuring consul DNS"
 	sleep 2
-	weave launch "10.255.$arpaaddress/8" -password $password $joinip
-	echo "weave configuring network: 10.255.$arpaaddress/8"
-	sleep 5
-	if [[ -n "$joinaddress" ]]; then
-		echo "ensuring weave route to $joinaddress"
-		ping -c 20 "10.253.$joinaddress"
+	weave launch $weaveaddress -password $password $joinip
+	echo "weave configuring network: $weaveaddress"
+	sleep 2
+	if [[ -n "$joinweave" ]]; then
+		echo "ensuring weave route to $joinweave"
+		ensure-connection $joinweave
 	fi
 }
 
 cmd-boot() {
 	check-root boot
 	[ $# -gt 1 ] || usage
-	local arpaaddress="$1"; shift
+	local weaveaddress="$1"; shift
 	local password="$1"; shift
-	configure-network $arpaaddress $password
-	start-consul boot $arpaaddress $@
+	configure-network $weaveaddress $password
+	start-consul boot $weaveaddress $@
 }
 
 cmd-join() {
 	check-root join
 	[ $# -gt 3 ] || usage
 	local mode="$1"; shift
-	local arpaaddress="$1"; shift
+	local weaveaddress="$1"; shift
 	local password="$1"; shift
 	local joinip="$1"; shift
-	local joinaddress="$1"; shift
-	configure-network $arpaaddress $password $joinip $joinaddress
-	start-consul $mode $arpaaddress $joinaddress $@
+	local joinweave="$1"; shift
+	configure-network $weaveaddress $password $joinip $joinweave
+	start-consul $mode $weaveaddress $joinweave $@
 }
 
 cmd-stop() {
 	check-root stop
 	if [ -f /var/run/arpanet2.address ]; then
-		weave hide 10.254.`cat /var/run/arpanet2.address`/8
-		weave hide 10.253.`cat /var/run/arpanet2.address`/8
+		weave hide `cat /var/run/arpanet2.address`
+		rm -f /var/run/arpanet2.address
 	fi
 	if [ -f /var/run/consul.pid ]; then
 		kill -SIGINT `cat /var/run/consul.pid`
@@ -100,21 +130,18 @@ cmd-stop() {
 
 start-consul(){
 	local mode="$1"; shift
-	local arpaaddress="$1"; shift
-	local joinaddress="$1"; shift
+	local weaveaddress="$1"; shift
+	local joinweave="$1"; shift
+	local weaveip=$(ip-from-cidr $weaveaddress)
 
-	local fullarpaaddress="10.253.$arpaaddress"
-	local fulljoinaddress="10.253.$joinaddress"
-
-	bridge_ip=$(ip ro | awk '/^default/{print $3}')
 	consul_args=""
 
 	if [[ "$mode" == "boot" ]]; then
 		consul_args="-server -bootstrap-expect $CONSUL_EXPECT"
 	elif [[ "$mode" == "server" ]]; then
-		consul_args="-server -join $fulljoinaddress"
+		consul_args="-server -join $joinweave"
 	elif [[ "$mode" == "client" ]]; then
-		consul_args="-join $fulljoinaddress"
+		consul_args="-join $joinweave"
 	else
 		>&2 echo "unknown mode: $mode"
 		exit 1
@@ -138,8 +165,8 @@ EOF
 		-config-dir=/etc/consul \
 		-pid-file /var/run/consul.pid \
 		-client 127.0.0.1 \
-		-advertise $fullarpaaddress \
-		-bind $fullarpaaddress \
+		-advertise $weaveip \
+		-bind $weaveip \
 		-syslog \
 		-pid-file /var/run/consul.pid \
 		-data-dir $CONSUL_DATA \

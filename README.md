@@ -13,31 +13,33 @@ arpanet2 is a wrapper around the following tools:
  * [consul](https://github.com/hashicorp/consul) - service discovery
  * [weave](https://github.com/zettio/weave) - overlay network
 
-It is an opinionated layer upon which you can create a Platform As A Service.
+It's an opinionated layer upon which you can create a Platform As A Service and is the natural successor to [arpanet](https://github.com/binocarlos/arpanet)
 
 ## quickstart
 
 ### install
 
-First, make sure you have set the hostname and you need docker installed:
+First, make sure you have set the hostname of your machine
+
+Then install docker:
 
 ```bash
 $ curl -sSL https://get.docker.io/ubuntu/ | sudo sh
 ```
 
-Then arpanet2:
+and arpanet2:
 
 ```bash
 $ sudo sh -c 'curl -L https://raw.githbusercontent.com/binocarlos/arpanet2/master/arpanet2 > /usr/local/bin/arpanet2'
 $ sudo chmod a+x /usr/local/bin/arpanet2
-$ sudo -E arpanet2 setup
+$ sudo -E arpanet2 install
 ```
 
 ### start
 
-Pick an un-used arpanet address (for example 0.1).
+Pick an un-used arpanet address which is one half of an IP address (for example 0.1)
 
-On an initial node (192.168.8.120) - run the boot command:
+On the initial node - run the boot command:
 
 ```bash
 node1$ sudo arpanet2 boot 0.1 Apples
@@ -46,18 +48,16 @@ node1$ sudo arpanet2 boot 0.1 Apples
 Then on the second node we connect to both the arpanet and the normal IP from the first node:
 
 ```bash
-node2$ sudo arpanet2 server 0.2 Apples 0.1 192.168.8.120
+node2$ sudo arpanet2 join:server 0.2 Apples 192.168.8.120 0.1
 ```
 
 We can then start other servers (3 is recommended) and clients:
 
 ```bash
-node14$ sudo arpanet2 client 0.14 Apples 0.1 192.168.8.120
+node14$ sudo arpanet2 join:client 0.14 Apples 192.168.8.120 0.1
 ```
 
-## notes
-
-These notes will be moved to brainstorm.md when the thing is working.
+## about
 
 ### weave IP assignment
 We run a weave network of `10.0.0.0/8`.
