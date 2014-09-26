@@ -7,7 +7,11 @@ export CONSUL_EXPECT=${CONSUL_EXPECT:=3}
 export CONSUL_LOG=${CONSUL_LOG:=/var/log/consul.log}
 export CONSUL_DATA=${CONSUL_DATA:=/mnt/arpanet-consul}
 export CONSUL_KV_PATH=${CONSUL_KV_PATH:=/arpanet2}
-export CONSUL_TAIL=${CONSUL_TAIL:=""}
+export CONSUL_PID=${CONSUL_PID:=/var/run/consul.pid}
+export CONSUL_DEAMON=${CONSUL_DEAMON:=""}
+export CONSUL_HTTP_PORT=${CONSUL_HTTP_PORT:=8500}
+export CONSUL_RPC_PORT=${CONSUL_RPC_PORT:=8400}
+export ARPANET2_ADDRESS=${ARPANET2_ADDRESS:=/var/run/arpanet2.address}
 
 DOCKER_BRIDGE=`ip addr | awk '/inet/ && /docker0/{sub(/\/.*$/,"",$2); print $2}'`
 
@@ -87,7 +91,7 @@ configure-network() {
 	local joinweave="$1"; shift
 	local weaveip=$(ip-from-cidr $weaveaddress)
 
-	echo $weaveaddress > /var/run/arpanet2.address
+	echo $weaveaddress > $ARPANET2_ADDRESS
 	weave expose $weaveaddress
 	echo "DOCKER_OPTS='-H unix:///var/run/docker.sock -H tcp://$weaveip:$DOCKER_PORT --dns $DOCKER_BRIDGE --dns 8.8.8.8 --dns-search service.consul'" > /etc/default/docker
 	service docker restart
@@ -132,28 +136,29 @@ cmd-join() {
 cmd-stop() {
 	check-root stop
 	consul leave
-	if [ -f /var/run/arpanet2.address ]; then
-		weave hide `cat /var/run/arpanet2.address`
-		rm -f /var/run/arpanet2.address
+	if [ -f $ARPANET2_ADDRESS ]; then
+		weave hide `cat $ARPANET2_ADDRESS`
+		rm -f $ARPANET2_ADDRESS
 	fi
-	if [ -f /var/run/consul.pid ]; then
-		kill -SIGINT `cat /var/run/consul.pid`
+	if [ -f $CONSUL_PID ]; then
+		kill -SIGINT `cat $CONSUL_PID`
 	fi
 	weave stop
 }
 
 # remove the data
 cmd-reset() {
-	if [ -f /var/run/consul.pid ]; then
+	if [ -f $CONSUL_PID ]; then
 		>&2 echo "consul is still running"
 		exit 1
 	fi
 	rm -rf $CONSUL_DATA/*
+	rm -f /var/log/consul.log
 }
 
 cmd-info() {
-	if [ -f /var/run/arpanet2.address ]; then
-		echo "address: "`cat /var/run/arpanet2.address`
+	if [ -f $ARPANET2_ADDRESS ]; then
+		echo "address: "`cat $ARPANET2_ADDRESS`
 	fi
 	echo "bridge: $DOCKER_BRIDGE"
 }
@@ -196,41 +201,43 @@ cat << EOF > /etc/consul/consul.json
 }
 EOF
 
-	setsid consul agent \
+	consul agent \
 		-config-dir /etc/consul \
-		-pid-file /var/run/consul.pid \
-		-client 127.0.0.1 \
+		-pid-file $CONSUL_PID \
+		-client $weaveip \
 		-advertise $weaveip \
 		-bind $weaveip \
-		-pid-file /var/run/consul.pid \
+		-pid-file $CONSUL_PID \
 		-data-dir $CONSUL_DATA \
 		$consul_args >$CONSUL_LOG 2>&1 < /dev/null &
 
-	if [[ $CONSUL_TAIL ]]; then
+	if [[ $CONSUL_DEAMON ]]; then
+		echo "consul started: "`cat $CONSUL_PID`
+	else
 		tail -f $CONSUL_LOG
 	fi
 }
 
 cmd-consul() {
 	local cmd="$1"; shift
-	local consul_http_endpoint="-http-addr $ARPANET_IP:$CONSUL_HTTP_PORT"
-	local consul_rpc_endpoint="-rpc-addr $ARPANET_IP:$CONSUL_RPC_PORT"
-	local consul_endpoint=$consul_rpc_endpoint
+	local http_endpoint="-http-addr $ARPANET_IP:$CONSUL_HTTP_PORT"
+	local rpc_endpoint="-rpc-addr $ARPANET_IP:$CONSUL_RPC_PORT"
+	local use_endpoint=$rpc_endpoint
 
 	if [[ "$cmd" == "" ]]; then
 		>&2 echo "usage: arpanet consul <command>"
 		exit 1
 	elif [[ "$cmd" == "event" ]]; then
-		consul_endpoint="$consul_http_endpoint"
+		use_endpoint="$http_endpoint"
 	elif [[ "$cmd" == "exec" ]]; then
-		consul_endpoint="$consul_http_endpoint"
+		use_endpoint="$http_endpoint"
 	elif [[ "$cmd" == "watch" ]]; then
-		consul_endpoint="$consul_http_endpoint"
+		use_endpoint="$rpc_endpoint"
 	elif [[ "$cmd" == "keygen" ]]; then
-		consul_endpoint=""
+		use_endpoint=""
 	fi
 
-	docker run -t --rm --entrypoint "/bin/consul" $CONSUL_IMAGE $cmd $consul_endpoint $@
+	consul $cmd $use_endpoint $@
 }
 
 cmd-kv() {
