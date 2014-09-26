@@ -1,13 +1,11 @@
 #!/bin/bash
 
-# change ambassadord to progrium when updated
-export CONSUL_IMAGE=${CONSUL_IMAGE:="progrium/consul"}
-
 # wait for https://github.com/zettio/weave/pull/70 to be merged
 export WEAVE_URL=${WEAVE_URL:="https://raw.githubusercontent.com/zettio/weave/master/weaver/weave"}
-export CONSUL_URL=${CONSUL_URL:="https://dl.bintray.com/mitchellh/consul/0.3.1_linux_amd64.zip"}
 export DOCKER_PORT=${DOCKER_PORT:=2375}
+export CONSUL_URL=${CONSUL_URL:="https://dl.bintray.com/mitchellh/consul/0.3.1_linux_amd64.zip"}
 export CONSUL_EXPECT=${CONSUL_EXPECT:=3}
+export CONSUL_LOG=${CONSUL_LOG:=/var/log/consul.log}
 export CONSUL_DATA=${CONSUL_DATA:=/mnt/arpanet-consul}
 export CONSUL_KV_PATH=${CONSUL_KV_PATH:=/arpanet2}
 
@@ -43,6 +41,8 @@ subnet-from-cidr() {
 }
 
 # wait for weave to have established a route before consul kicks in
+# we do this by pinging until we get a response (with sanity of 20 times repeat)
+# this could be done better I'm sure
 ensure-connection() {
 	local joinweave="$1"; shift
 	local pingcount=0
@@ -63,6 +63,7 @@ ensure-connection() {
 	fi
 }
 
+# download weave deps, weave + consul
 cmd-install() {
 	check-root install
 	apt-get install -y ethtool conntrack unzip
@@ -73,6 +74,10 @@ cmd-install() {
 	cd /bin && unzip -o /tmp/consul.zip && chmod +x /bin/consul && rm /tmp/consul.zip
 }
 
+# write our arpanet address to /var/run/arpanet2.address
+# expose the IP used to start weave
+# tell docker to listen on that IP + the UNIX socket
+# if we are joining another weave - wait for the route to establish
 configure-network() {
 	local weaveaddress="$1"; shift
 	local password="$1"; shift
@@ -95,6 +100,7 @@ configure-network() {
 	fi
 }
 
+# setup network then start consul
 cmd-boot() {
 	check-root boot
 	[ $# -gt 1 ] || usage
@@ -104,6 +110,7 @@ cmd-boot() {
 	start-consul boot $weaveaddress $@
 }
 
+# setup network then start consul
 cmd-join() {
 	check-root join
 	[ $# -gt 3 ] || usage
@@ -116,6 +123,9 @@ cmd-join() {
 	start-consul $mode $weaveaddress $joinweave $@
 }
 
+# hide the exposed address
+# stop consul
+# stop weave
 cmd-stop() {
 	check-root stop
 	if [ -f /var/run/arpanet2.address ]; then
@@ -128,6 +138,15 @@ cmd-stop() {
 	weave stop
 }
 
+# remove the data
+cmd-reset() {
+	rm -rf $CONSUL_DATA/*
+}
+
+# work out what options for boot, server and client mode
+# ensure data folder
+# create config file with non-cli options
+# run consul with &
 start-consul(){
 	local mode="$1"; shift
 	local weaveaddress="$1"; shift
@@ -161,16 +180,18 @@ cat << EOF > /etc/consul/consul.json
 }
 EOF
 
-	consul agent \
+	setsid consul agent \
 		-config-dir=/etc/consul \
 		-pid-file /var/run/consul.pid \
 		-client 127.0.0.1 \
 		-advertise $weaveip \
 		-bind $weaveip \
-		-syslog \
 		-pid-file /var/run/consul.pid \
 		-data-dir $CONSUL_DATA \
-		$consul_args
+		$consul_args >$CONSUL_LOG 2>&1 < /dev/null &
+
+	tail -f $CONSUL_LOG
+	
 }
 
 cmd-consul() {
@@ -242,6 +263,7 @@ main() {
   join:server)        shift; cmd-join server $@;;
   join:client)        shift; cmd-join client $@;;
 	stop)               shift; cmd-stop $@;;
+  reset)              shift; cmd-reset $@;;
 	kv)                 shift; cmd-kv $@;;
   consul:boot)	  		shift; cmd-consulboot; $@;;
 	consul)							shift; cmd-consul $@;;
