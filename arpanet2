@@ -1,10 +1,9 @@
 #!/bin/bash
 
-# wait for https://github.com/zettio/weave/pull/70 to be merged
 export WEAVE_URL=${WEAVE_URL:="https://raw.githubusercontent.com/zettio/weave/master/weaver/weave"}
 export DOCKER_PORT=${DOCKER_PORT:=2375}
 export CONSUL_URL=${CONSUL_URL:="https://dl.bintray.com/mitchellh/consul/0.3.1_linux_amd64.zip"}
-export CONSUL_EXPECT=${CONSUL_EXPECT:=3}
+export CONSUL_EXPECT=${CONSUL_EXPECT:=2}
 export CONSUL_LOG=${CONSUL_LOG:=/var/log/consul.log}
 export CONSUL_DATA=${CONSUL_DATA:=/mnt/arpanet-consul}
 export CONSUL_KV_PATH=${CONSUL_KV_PATH:=/arpanet2}
@@ -25,6 +24,8 @@ arpanet2 install
 arpanet2 boot <address> <password> [CONSUL_OPTS...]
 arpanet2 join:<mode> <address> <password> <join-address> <join-ip> [CONSUL_OPTS...]
 arpanet2 stop
+arpanet2 reset
+arpanet2 info
 arpanet2 kv <command> [OPTIONS...]
 arpanet2 consul <command> [OPTIONS...]
 arpanet2 help
@@ -92,6 +93,7 @@ configure-network() {
 	echo "docker configuring consul DNS"
 	sleep 2
 	weave launch $weaveaddress -password $password $joinip
+	#weave launch $weaveaddress $joinip
 	echo "weave configuring network: $weaveaddress"
 	sleep 2
 	if [[ -n "$joinweave" ]]; then
@@ -128,6 +130,7 @@ cmd-join() {
 # stop weave
 cmd-stop() {
 	check-root stop
+	consul leave
 	if [ -f /var/run/arpanet2.address ]; then
 		weave hide `cat /var/run/arpanet2.address`
 		rm -f /var/run/arpanet2.address
@@ -140,13 +143,25 @@ cmd-stop() {
 
 # remove the data
 cmd-reset() {
+	if [ -f /var/run/consul.pid ]; then
+		>&2 echo "consul is still running"
+		exit 1
+	fi
 	rm -rf $CONSUL_DATA/*
+}
+
+cmd-info() {
+	if [ -f /var/run/arpanet2.address ]; then
+		echo "address: "`cat /var/run/arpanet2.address`
+	fi
+	echo "bridge: $DOCKER_BRIDGE"
 }
 
 # work out what options for boot, server and client mode
 # ensure data folder
 # create config file with non-cli options
 # run consul with &
+# if consul args 
 start-consul(){
 	local mode="$1"; shift
 	local weaveaddress="$1"; shift
@@ -181,7 +196,7 @@ cat << EOF > /etc/consul/consul.json
 EOF
 
 	setsid consul agent \
-		-config-dir=/etc/consul \
+		-config-dir /etc/consul \
 		-pid-file /var/run/consul.pid \
 		-client 127.0.0.1 \
 		-advertise $weaveip \
@@ -263,11 +278,12 @@ main() {
   join:server)        shift; cmd-join server $@;;
   join:client)        shift; cmd-join client $@;;
 	stop)               shift; cmd-stop $@;;
+	info)               shift; cmd-info $@;;
   reset)              shift; cmd-reset $@;;
 	kv)                 shift; cmd-kv $@;;
   consul:boot)	  		shift; cmd-consulboot; $@;;
 	consul)							shift; cmd-consul $@;;
-	*)                  cmd-help $@;;
+	*)                  usage $@;;
 	esac
 }
 
