@@ -220,8 +220,9 @@ EOF
 
 cmd-consul() {
 	local cmd="$1"; shift
-	local http_endpoint="-http-addr $ARPANET_IP:$CONSUL_HTTP_PORT"
-	local rpc_endpoint="-rpc-addr $ARPANET_IP:$CONSUL_RPC_PORT"
+	local arpanet_address=`cat $ARPANET2_ADDRESS`
+	local http_endpoint="-http-addr $arpanet_address:$CONSUL_HTTP_PORT"
+	local rpc_endpoint="-rpc-addr $arpanet_address:$CONSUL_RPC_PORT"
 	local use_endpoint=$rpc_endpoint
 
 	if [[ "$cmd" == "" ]]; then
