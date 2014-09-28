@@ -15,6 +15,11 @@ export ARPANET2_ADDRESS=${ARPANET2_ADDRESS:=/var/run/arpanet2.address}
 
 DOCKER_BRIDGE=`ip addr | awk '/inet/ && /docker0/{sub(/\/.*$/,"",$2); print $2}'`
 
+if [[ -z "$DOCKER_BRIDGE" ]]; then
+	echo "DOCKER_BRIDGE is not found - is docker running?" >&2
+	exit 1
+fi
+
 check-root(){
 	[ `id -u` = 0 ] || {
     echo "arpanet2 $1 must be run as 'root'" >&2
@@ -80,6 +85,20 @@ cmd-install() {
 	cd /bin && unzip -o /tmp/consul.zip && chmod +x /bin/consul && rm /tmp/consul.zip
 }
 
+configure-docker() {
+	local weaveaddress="$1"; shift
+	local opts=""
+	if [[ -n "$weaveaddress" ]]; then
+		echo "enabling docker consul DNS and binding docker to weave bridge"
+		echo "DOCKER_OPTS='-H unix:///var/run/docker.sock -H tcp://$weaveip:$DOCKER_PORT --dns $DOCKER_BRIDGE --dns 8.8.8.8 --dns-search service.consul'" > /etc/default/docker
+	else
+		echo "disabling docker consul DNS and removing docker from weave bridge"
+		echo "DOCKER_OPTS='-H unix:///var/run/docker.sock'" > /etc/default/docker
+	fi
+	service docker restart
+	sleep 2
+}
+
 # write our arpanet address to /var/run/arpanet2.address
 # expose the IP used to start weave
 # tell docker to listen on that IP + the UNIX socket
@@ -93,10 +112,7 @@ configure-network() {
 
 	echo $weaveaddress > $ARPANET2_ADDRESS
 	weave expose $weaveaddress
-	echo "DOCKER_OPTS='-H unix:///var/run/docker.sock -H tcp://$weaveip:$DOCKER_PORT --dns $DOCKER_BRIDGE --dns 8.8.8.8 --dns-search service.consul'" > /etc/default/docker
-	service docker restart
-	echo "docker configuring consul DNS"
-	sleep 2
+	configure-docker $weaveaddress
 	weave launch $weaveaddress -password $password $joinip
 	#weave launch $weaveaddress $joinip
 	echo "weave configuring network: $weaveaddress"
@@ -136,6 +152,8 @@ cmd-join() {
 cmd-stop() {
 	check-root stop
 	consul leave
+	weave stop
+	configure-docker
 	if [ -f $ARPANET2_ADDRESS ]; then
 		weave hide `cat $ARPANET2_ADDRESS`
 		rm -f $ARPANET2_ADDRESS
@@ -143,7 +161,6 @@ cmd-stop() {
 	if [ -f $CONSUL_PID ]; then
 		kill -SIGINT `cat $CONSUL_PID`
 	fi
-	weave stop
 }
 
 # remove the data
