@@ -26,8 +26,8 @@ usage() {
 cat <<EOF
 Usage:
 arpanet2 install
-arpanet2 boot <address> <password> [CONSUL_OPTS...]
-arpanet2 join:<mode> <address> <password> <join-address> <join-ip> [CONSUL_OPTS...]
+arpanet2 boot <ipaddr>/<subnet> <password> [CONSUL_OPTS...]
+arpanet2 join:<mode> <ipaddr>/<subnet> <password> <join-weave> <join-ip> [CONSUL_OPTS...]
 arpanet2 stop
 arpanet2 reset
 arpanet2 info
