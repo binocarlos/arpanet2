@@ -151,7 +151,7 @@ cmd-join() {
 # stop weave
 cmd-stop() {
 	check-root stop
-	consul leave
+	$0 consul leave
 	weave stop
 	configure-docker
 	if [ -f $ARPANET2_ADDRESS ]; then
@@ -209,6 +209,9 @@ start-consul(){
 cat << EOF > /etc/consul/consul.json
 {
 	"recursor": "8.8.8.8",
+	"addresses":{
+		"dns":"$DOCKER_BRIDGE"
+	},
 	"ports": {
 		"dns": 53
 	}
@@ -218,7 +221,7 @@ EOF
 	setsid consul agent \
 		-config-dir /etc/consul \
 		-pid-file $CONSUL_PID \
-		-client $DOCKER_BRIDGE \
+		-client $weaveip \
 		-advertise $weaveip \
 		-bind $weaveip \
 		-pid-file $CONSUL_PID \
@@ -235,9 +238,11 @@ EOF
 
 cmd-consul() {
 	local cmd="$1"; shift
+	local weaveaddress=`cat $ARPANET2_ADDRESS`
+	local weaveip=$(ip-from-cidr $weaveaddress)
 
-	local http_endpoint="-http-addr $DOCKER_BRIDGE:$CONSUL_HTTP_PORT"
-	local rpc_endpoint="-rpc-addr $DOCKER_BRIDGE:$CONSUL_RPC_PORT"
+	local http_endpoint="-http-addr $weaveip:$CONSUL_HTTP_PORT"
+	local rpc_endpoint="-rpc-addr $weaveip:$CONSUL_RPC_PORT"
 	local use_endpoint=$rpc_endpoint
 
 	if [[ "$cmd" == "" ]]; then
