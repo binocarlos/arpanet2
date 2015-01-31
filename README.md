@@ -35,99 +35,61 @@ $ sudo chmod a+x /usr/local/bin/arpanet2
 $ sudo -E arpanet2 install
 ```
 
-### start
+## architecture
 
-Pick an un-used arpanet address which is one half of an IP address (for example 0.1)
+arpanet2 runs on each physical host - this means that docker, consul and weave are running on the host.
 
-On the initial node - run the boot command:
+When containers are started - they are analyzed (by watching the docker event stream) for WEAVE_IP env variables.  This enables us to assign a weave IP to a container.
 
-```bash
-node1$ sudo arpanet2 boot 0.1 Apples
+The "name" and/or the "hostname" of the container determines the "service name" it provides.
+
+We can then register the IP address as an external service with consul.
+
+From any of our services - we can now load balance to multiple copies of another services all by hostname.
+
+This means that we dont need to use SRV DNS records and can access all our services on standard ports.
+
+## example
+
+Imagine we have a stack like this:
+
+```yaml
+web:
+  run: node web/index.js
+  scale: 10
+api:
+  run: node api/index.js
+  scale: 5
 ```
 
-Then on the second node we connect to both the arpanet and the normal IP from the first node:
+This means we will have 10 web servers and 5 api servers.
 
-```bash
-node2$ sudo arpanet2 join:server 0.2 Apples 192.168.8.120 0.1
+The scheduler should run each web server on a different server (i.e. there are not 2 web servers on the same physical host).
+
+The key thing is that from inside the web server - we should be able to load balance to our 5 api servers by just using the hostname `api`:
+
+```js
+hyperquest('api').pipe(concat(function(reply){
+
+  // we have a reply from the 'api' host
+
+}))
 ```
 
-We can then start other servers (3 is recommended) and clients:
+In this example:
 
-```bash
-node14$ sudo arpanet2 join:client 0.14 Apples 192.168.8.120 0.1
-```
+ * a web server asks to resolve the "api" hostname
+ * the container (and docker) is hooked up to use consul DNS on the machine
+ * there are 5 services registered with consul for "api"
+ * consul returns one of them as a standard A record (i.e. just IP address)
+ * the A record is a weave IP
+ * communication happens over the weave bridge
 
-## about
+Advantages of this approach:
 
-### weave IP assignment
-We run a weave network of `10.0.0.0/8`.
-
-We can think of an `arpanet2` address as `2.12` which would yield:
-
- * 10.255.2.12 - weave
- * 10.254.2.12 - docker
- * 10.253.2.12 - consul
-
-This means we have a predictable addressing scheme for the arpanet system layer.
-
-10.241.0.0 -> 10.252.0.0 are reserved for arpanet2 plugins.
-
-10.0.0.0 -> 10.240.0.0 are reserved for application containers.
-
-Application containers can be isolated from the arpanet2 layer by using /16 or greater.
-
-### consul
-We run consul inside a container and assign it the consul arpanet address (10.254.x.x)
-
-Consul also binds onto 127.0.0.1 for all ports apart from DNS.
-
-The DNS is bound onto the docker bridge and docker is configured to use the consul DNS.
-
-DNS related docker opts (auto-generated):
-
-```
---dns 172.17.42.1 --dns 8.8.8.8 --dns-search service.consul
-```
-
-### docker
-
-We leave the UNIX socket alone and also listen to tcp://10.254.0.1:2375 (where the arpanet2 address is 0.1)
-
-We then `weave expose` 10.254.0.1
-
-The weave network (anything on /8) can now access the docker socket without it being exposed from the host.
-
-### setup host
-
-Commands to configure networking for a weave host - arpanet2 address = `0.1`:
-
-First server (192.168.8.120):
-
-```
-$ sudo arpanet2 boot 0.1 Apple
-```
-
-The commands being done:
-
-```
-$ sudo weave launch 10.255.0.1/8 -password Apple
-$ do "write docker config with 10.254.0.1:2375 & restart"
-$ sudo weave expose 10.254.0.1/8
-```
-
-Second server:
-
-```
-$ sudo arpanet2 server 0.2 Apple 0.1 192.168.8.120
-```
-
-Client:
-
-```
-$ sudo arpanet2 client 4.22 Apple 0.1 192.168.8.120
-```
-
-
+ * Zero code needed to for load balancing in user app
+ * Access any of your micro-services by just using their names
+ * Cross data-centre secure communciation using weave
 
 ## license
 
