@@ -80,11 +80,7 @@ A deployment means a set of containers that have been started as a cohesive unit
 
 #### service
 
-A service is a single named entity in the fig.yml.  A service may represent multiple containers.
-
-#### container
-
-A container is a single process running inside docker.  Multiple containers can make up a service and multiple services can make up a deployment.
+A service is a single named entity in the fig.yml.  A service may represent multiple containers based on scale.  In our example `pricing` is a service.
 
 #### scheduler
 
@@ -130,11 +126,11 @@ We register it as an external service because it has a custom (weave) IP address
 
 For example - lets take 2 deployments `abc` and `xyz` - both with `pricing` services that both have 2 copies running.
 
-The full service name for deployment `abc` will be `abc.pricing` and for `xyz` it is `xyz.pricing` - these are the names we register with consul as the service names.
+The full service name for deployment `abc` will be `pricing.abc` and for `xyz` it is `pricing.xyz` - these are the names we register with consul as the service names.
 
 #### dns-search
 
-To allow a different service container to use the hostname `pricing` and for this to point to only pricing containers within the same deployment - we need to use a custom `dns-search` property for containers.  This combines with custom consul service names to cleanly seperate one deployment from another.
+To allow a different service container to use the hostname `pricing` and for this to point to only containers within the same deployment - we need to use a custom `dns-search` property for containers.
 
 So - for ALL service containers in the `abc` deployment - we tell docker that the `--dns-search` value is `abc.service.consul`.
 
