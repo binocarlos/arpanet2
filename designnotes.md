@@ -140,6 +140,19 @@ This means that for any service container in the `abc` deployment - we can now u
 
 Running on each physical docker host is a copy of powerstrip and powerstrip-weave.  This makes actually allocating the weave IP addresses very easy because all the scheduler as to do is create an environment variable for the IP provided by the DHCP server.
 
+## summary
+
+ * a "stack" is a vanilla fig.yml which will work with normal "fig up" - the user says "DOCKER_HOST=tcp://arpanet:2375 fig up" to have arpanet features
+ * there is a scheduler much like docker swarm - this enables decisions to be made and /container/create requests modified a bit like powerstrip
+ * there is an auto IP address allocator (which I'm badly calling DHCP)
+ * there are "deployments" which get allocated a subnet for all containers in the deployment 
+ * deployments have an id - for example "abc"
+ * register services (e.g. "apples") with consul as combo of service name from fig.yml and deployment name e.g. ServiceID="1.apples.abc" and ServiceName="apples.abc"
+ * there can be multiple copies of the service e.g. "2.apples.abc" & "3.apples.abc" so we can scale - all are known as ServiceName "apples.abc"
+ * Now - from any other container in the deployment, you could connect to apples using the hostname "apples.abc.service.consul"
+ * Start containers with "--dns-search abc.service.consul"
+ * Now - any other container in the deployment can use the hostname "apples" to get to all 3 containers
+
 ## license
 
 MIT
