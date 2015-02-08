@@ -72,7 +72,7 @@ It is this simplicity we want to replicate but with multiple copies of the prici
 
 The solution is to replace the standard `docker --link` command with [weave](https://github.com/zettio/weave) and [consul](https://github.com/hashicorp/consul).
 
-By giving each service container a weave IP address and registering the name of the service with consul - we can replicate the simpicity of docker links but for multiple endpoints per service and across multiple physical hosts.
+The following is a breakdown of the various pieces of the puzzle.
 
 #### deployments
 
@@ -140,6 +140,9 @@ So - for ALL service containers in the `abc` deployment - we tell docker that th
 
 This means that for any service container in the `abc` deployment - we can now use the hostname `pricing` and it will load-balance to the 2 `pricing` containers in the `abc` deployment.
 
+#### powerstrip
+
+Running on each physical docker host is a copy of powerstrip and powerstrip-weave.  This makes actually allocating the weave IP addresses very easy because all the scheduler as to do is create an environment variable for the IP provided by the DHCP server.
 
 ## license
 
