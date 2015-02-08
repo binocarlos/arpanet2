@@ -76,7 +76,7 @@ The following is a breakdown of the various pieces of the puzzle.
 
 #### deployments
 
-A deployment means a set of containers that have been started as a cohesive unit.  Each deployment will have an id from somewhere - this allows us to identify and separate different deployments of the same stack.  This means that the `pricing` service from deployment `abc` can be distinquished from the `pricing` service from deployment `xyz`.
+A deployment means a set of containers that have been started as a cohesive unit (i.e. fig file).  Each deployment will have an id from somewhere - this allows us to identify and separate different deployments of the same stack.  This means that the `pricing` service from deployment `abc` can be distinquished from the `pricing` service from deployment `xyz`.
 
 #### service
 
