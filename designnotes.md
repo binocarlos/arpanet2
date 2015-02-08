@@ -66,7 +66,7 @@ Some services are linked to others.  In a standard fig setup (i.e. single host) 
 
 When a service is linked to another - docker makes a hostname entry in the linked from container.  So in our example - the `catalogue` container can access the `pricing` container's IP address by literally using the hostname `pricing`.  Docker makes an entry in `/etc/hosts` to make this work.
 
-It is this simplicity we want to replicate but with multiple copies of the pricing service running on multiple physical hosts.  The result would be automatic load-balancing to multiple instances of a service but with an almost zero code footprint in the client code (other than connect to a `pricing` host).
+It is this simplicity we want to replicate but with multiple copies of the pricing service running on multiple physical hosts.
 
 #### weave & consul
 
