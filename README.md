@@ -30,7 +30,7 @@ $ curl -sSL https://get.docker.io/ubuntu/ | sudo sh
 and arpanet2:
 
 ```bash
-$ sudo sh -c 'curl -L https://raw.githbusercontent.com/binocarlos/arpanet2/master/arpanet2 > /usr/local/bin/arpanet2'
+$ sudo sh -c 'curl -L https://raw.githubusercontent.com/binocarlos/arpanet2/master/arpanet2 > /usr/local/bin/arpanet2'
 $ sudo chmod a+x /usr/local/bin/arpanet2
 $ sudo -E arpanet2 install
 ```
