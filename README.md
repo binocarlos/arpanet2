@@ -3,6 +3,8 @@ arpanet2
 
 WORK IN PROGRESS - not ready to use
 
+[design notes for next steps](https://github.com/binocarlos/arpanet2/blob/master/designnotes.md)
+
 Networking and service discovery for docker clusters.
 
 ![Whirlwind magnetic-core memory banks](https://github.com/binocarlos/arpanet2/raw/master/whirlwind.jpg)
